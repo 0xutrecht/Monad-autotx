@@ -1,264 +1,125 @@
+// apriori.js - Sudah disinkronkan dengan struktur dan gaya di uniswap.js
+
 require("dotenv").config();
-const ethers = require("ethers");
+const { ethers } = require("ethers");
 const colors = require("colors");
 const displayHeader = require("../src/banner.js");
-const readline = require("readline");
 const axios = require("axios");
 
-displayHeader();
-
-const RPC_URL = "https://testnet-rpc.monad.xyz"; 
+// ============================
+// ?? KONFIGURASI UTAMA
+// ============================
+const RPC_URL = "https://testnet-rpc.monad.xyz";
 const EXPLORER_URL = "https://testnet.monadexplorer.com/tx/";
-const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
-const PRIVATE_KEY = process.env.PRIVATE_KEY;
-const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
-
 const contractAddress = "0xb2f82D0f38dc453D596Ad40A37799446Cc89274A";
-const gasLimitStake = 500000;
-const gasLimitUnstake = 800000;
-const gasLimitClaim = 800000;
+
+const PRIVATE_KEY = process.env.CURRENT_PK || process.env.PRIVATE_KEY;
+if (!PRIVATE_KEY) throw new Error("\u274c Tidak ada Private Key di .env");
+
+const gasLimitStake = 100000;
+const gasLimitUnstake = 300000;
+const gasLimitClaim = 300000;
 
 const minimalABI = [
-  "function getPendingUnstakeRequests(address) view returns (uint256[] memory)",
+  "function getPendingUnstakeRequests(address) view returns (uint256[] memory)"
 ];
 
-const contract = new ethers.Contract(contractAddress, minimalABI, provider);
-
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-});
-
+// ============================
+// ?? UTILS
+// ============================
 function getRandomAmount() {
-  const min = 0.01;
-  const max = 0.05;
+  const min = 0.0001;
+  const max = 0.0005;
   const randomAmount = Math.random() * (max - min) + min;
   return ethers.utils.parseEther(randomAmount.toFixed(4));
 }
 
-function getRandomDelay() {
-  const minDelay = 1 * 60 * 1000;
-  const maxDelay = 2 * 60 * 1000;
-  return Math.floor(Math.random() * (maxDelay - minDelay + 1) + minDelay);
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function stakeMON(cycleNumber) {
+// ============================
+// ?? EKSEKUSI UTAMA
+// ============================
+(async () => {
   try {
+    displayHeader();
+    const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
+    const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
+
+    console.log(colors.green("\n=============================="));
+    console.log(colors.bold(`?? Wallet: ${wallet.address}`));
+    console.log(colors.green("=============================="));
+
     const stakeAmount = getRandomAmount();
 
-    console.log(
-      `🔄 Stake: ${ethers.utils.formatEther(stakeAmount)} MON`.green
-    );
-
-    const data =
+    // ?? STAKE
+    console.log(colors.cyan(`\n?? Stake: ${ethers.utils.formatEther(stakeAmount)} MON`));
+    const stakeData =
       "0x6e553f65" +
       ethers.utils.hexZeroPad(stakeAmount.toHexString(), 32).slice(2) +
       ethers.utils.hexZeroPad(wallet.address, 32).slice(2);
 
-    const tx = {
+    const stakeTx = await wallet.sendTransaction({
       to: contractAddress,
-      data: data,
+      data: stakeData,
       gasLimit: ethers.utils.hexlify(gasLimitStake),
-      value: stakeAmount,
-    };
+      value: stakeAmount
+    });
+    console.log(colors.yellow(`?? Tx Hash: ${stakeTx.hash}`));
+    await stakeTx.wait();
+    console.log(colors.green("\u2705 Stake berhasil!"));
 
-    console.log(`✅ Stake `.magenta);
-    const txResponse = await wallet.sendTransaction(tx);
-    console.log(
-      `➡️  Hash: ${txResponse.hash}`.yellow
-    );
+    await sleep(3000);
 
-    console.log(`🔄 Wait confirmation`.grey);
-    const receipt = await txResponse.wait();
-    console.log(`✅ Stake successful!`.green);
-
-    return { receipt, stakeAmount };
-  } catch (error) {
-    console.error(`❌ Staking failed:`.red, error.message);
-    throw error;
-  }
-}
-
-async function requestUnstakeAprMON(amountToUnstake, cycleNumber) {
-  try {
-    console.error(` `);
-    console.log(
-      `🔄 unstake: ${ethers.utils.formatEther(
-        amountToUnstake
-      )} aprMON`.green
-    );
-
-    const data =
+    // ?? UNSTAKE
+    const unstakeData =
       "0x7d41c86e" +
-      ethers.utils.hexZeroPad(amountToUnstake.toHexString(), 32).slice(2) +
+      ethers.utils.hexZeroPad(stakeAmount.toHexString(), 32).slice(2) +
       ethers.utils.hexZeroPad(wallet.address, 32).slice(2) +
       ethers.utils.hexZeroPad(wallet.address, 32).slice(2);
 
-    const tx = {
+    console.log(colors.cyan(`\n?? Unstake: ${ethers.utils.formatEther(stakeAmount)} aprMON`));
+    const unstakeTx = await wallet.sendTransaction({
       to: contractAddress,
-      data: data,
+      data: unstakeData,
       gasLimit: ethers.utils.hexlify(gasLimitUnstake),
-      value: ethers.utils.parseEther("0"),
-    };
+      value: 0
+    });
+    console.log(colors.yellow(`?? Tx Hash: ${unstakeTx.hash}`));
+    await unstakeTx.wait();
+    console.log(colors.green("\u2705 Unstake berhasil!"));
 
-    console.log(`🔄 Unstake`.magenta);
-    const txResponse = await wallet.sendTransaction(tx);
-    console.log(
-      `➡️   Hash: ${txResponse.hash}`.yellow
-    );
+    await sleep(3000);
 
-    console.log(`🔄 Wait confirmation`.grey);
-    const receipt = await txResponse.wait();
-    console.log(`✅ Unstake successful`.green);
+    // ?? CLAIM
+    const apiUrl = `https://testnet.monadexplorer.com/api/v1/unstake-requests?address=${wallet.address}`;
+    const res = await axios.get(apiUrl, { timeout: 10000 });
+    const claimable = res.data.find(r => !r.claimed && r.is_claimable);
 
-    return receipt;
-  } catch (error) {
-    console.error(`❌ Unstake failed:`.red, error.message);
-    throw error;
-  }
-}
-
-async function checkClaimableStatus(walletAddress) {
-  try {
-    const apiUrl = `https://testnet.monadexplorer.com/api/v1/unstake-requests?address=${walletAddress}`;
-    const response = await axios.get(apiUrl, { timeout: 10000 });
-
-    const claimableRequest = response.data.find(
-      (request) => !request.claimed && request.is_claimable
-    );
-
-    if (claimableRequest) {
-      console.log(`✅ Found claimable: ${claimableRequest.id}`.green);
-      return {
-        id: claimableRequest.id,
-        isClaimable: true,
-      };
-    }
-    return {
-      id: null,
-      isClaimable: false,
-    };
-  } catch (error) {
-    console.error(
-      `❌ Failed Claimable :`.red,
-      error.message
-    );
-    return {
-      id: null,
-      isClaimable: false,
-    };
-  }
-}
-
-async function claimMON(cycleNumber) {
-  try {
-    const { id, isClaimable } = await checkClaimableStatus(wallet.address);
-
-    if (!isClaimable || !id) {
-      console.log(`❌ No claimable`.red);
-      return null;
+    if (!claimable) {
+      console.log(colors.gray("\n?? Tidak ada yang bisa diklaim"));
+      return;
     }
 
-    console.log(`✅ Claim withdrawal: ${id}`.green);
+    const claimData =
+      "0x48c54b9d" +
+      ethers.utils.hexZeroPad(ethers.BigNumber.from(claimable.id).toHexString(), 32).slice(2) +
+      ethers.utils.hexZeroPad(wallet.address, 32).slice(2);
 
-    const data =
-      "0x492e47d2" +
-      "0000000000000000000000000000000000000000000000000000000000000040" +
-      ethers.utils.hexZeroPad(wallet.address, 32).slice(2) +
-      "0000000000000000000000000000000000000000000000000000000000000001" +
-      ethers.utils
-        .hexZeroPad(ethers.BigNumber.from(id).toHexString(), 32)
-        .slice(2);
-
-    const tx = {
+    console.log(colors.cyan(`\n?? Klaim ID: ${claimable.id}`));
+    const claimTx = await wallet.sendTransaction({
       to: contractAddress,
-      data: data,
+      data: claimData,
       gasLimit: ethers.utils.hexlify(gasLimitClaim),
-      value: ethers.utils.parseEther("0"),
-    };
+      value: 0
+    });
+    console.log(colors.yellow(`?? Tx Hash: ${claimTx.hash}`));
+    await claimTx.wait();
+    console.log(colors.green("\u2705 Klaim berhasil!"));
 
-    console.log(`✅ Claim `.green);
-    const txResponse = await wallet.sendTransaction(tx);
-    console.log(`➡️ Hash: ${txResponse.hash}`.grey);
-
-    console.log(`✅ Wait Confirmation`.green);
-    const receipt = await txResponse.wait();
-    console.log(`✅ Claim successful: ${id}`.green);
-
-    return receipt;
   } catch (error) {
-    console.error(`❌ Claim failed:`.red, error.message);
-    throw error;
+    console.error(colors.red(`\n?? Error: ${error.message}`));
+    process.exit(1);
   }
-}
-
-async function runCycle(cycleNumber) {
-  try {
-    const { stakeAmount } = await stakeMON(cycleNumber);
-
-    const delayTimeBeforeUnstake = getRandomDelay();
-    console.log(
-      `⏳ Wait ${
-        delayTimeBeforeUnstake / 1000
-      } Seconds`.grey
-    );
-    await delay(delayTimeBeforeUnstake);
-
-    await requestUnstakeAprMON(stakeAmount, cycleNumber);
-
-    console.log(
-      `✅ Wait`.green
-    );
-    await delay(660000);
-
-
-    await claimMON(cycleNumber);
-
-    console.log();
-  } catch (error) {
-    throw error;
-  }
-}
-
-async function getCycleCount() {
-  return 1;
-}
-
-async function main() {
-  try {
-    console.log(`🪫  Starting Apriori ⏩⏩⏩⏩`.blue);
-    console.log(` `);
-
-    const cycleCount = await getCycleCount();
-
-    for (let i = 1; i <= cycleCount; i++) {
-      await runCycle(i);
-
-      if (i < cycleCount) {
-        const interCycleDelay = getRandomDelay();
-        console.log();
-        await delay(interCycleDelay);
-      }
-    }
-
-    console.log(
-      `\nAll completed successfully!`.green.bold
-    );
-  } catch (error) {
-    console.error("Operation failed:".red, error.message);
-  } finally {
-    rl.close();
-  }
-}
-
-main();
-
-module.exports = {
-  stakeMON,
-  requestUnstakeAprMON,
-  claimMON,
-  getRandomAmount,
-  getRandomDelay,
-};
+})();

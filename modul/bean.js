@@ -1,167 +1,195 @@
 const { ethers } = require("ethers");
 const colors = require("colors");
-const cfonts = require("cfonts");
-const fs = require("fs");
-
-const { ROUTER_CONTRACT, WMON_CONTRACT, USDC_CONTRACT, BEAN_CONTRACT, JAI_CONTRACT, ABI } = require("../abi/BEAN.js");
+require("dotenv").config();
 
 const displayHeader = require("../src/banner.js");
+const {
+  ROUTER_CONTRACT,
+  WMON_CONTRACT,
+  USDC_CONTRACT,
+  BEAN_CONTRACT,
+  JAI_CONTRACT,
+  ABI
+} = require("../abi/BEAN.js");
 
-require("dotenv").config();
 displayHeader();
 
-const PRIVATE_KEY = process.env.PRIVATE_KEY;
-if (!PRIVATE_KEY) {
-    throw new Error("No Privatekey in .env");
-}
-
 const RPC_URLS = [
-    "https://testnet-rpc.monorail.xyz",
-    "https://testnet-rpc.monad.xyz",
-    "https://monad-testnet.drpc.org"
+  "https://testnet-rpc.monorail.xyz",
+  "https://testnet-rpc.monad.xyz",
+  "https://monad-testnet.drpc.org"
 ];
-
-const CHAIN_ID = 10143;
-const BEAN_SWAP_ROUTER_ADDRESS = ROUTER_CONTRACT; 
-const WETH_ADDRESS = WMON_CONTRACT; 
 
 const TOKEN_ADDRESSES = {
-    "WMON": WMON_CONTRACT, 
-    "USDC": USDC_CONTRACT, 
-    "BEAN": BEAN_CONTRACT,  
-    "JAI ": JAI_CONTRACT
+  WMON: WMON_CONTRACT,
+  USDC: USDC_CONTRACT,
+  BEAN: BEAN_CONTRACT,
+  JAI: JAI_CONTRACT
 };
 
-const erc20Abi = [
-    { "constant": true, "inputs": [{ "name": "_owner", "type": "address" }], "name": "balanceOf", "outputs": [{ "name": "balance", "type": "uint256" }], "type": "function" },
-    { "constant": false, "inputs": [{ "name": "_spender", "type": "address" }, { "name": "_value", "type": "uint256" }], "name": "approve", "outputs": [{ "name": "", "type": "bool" }], "type": "function" }
-];
+const CHAIN_ID = 10143;
+const BEAN_SWAP_ROUTER_ADDRESS = ROUTER_CONTRACT;
+const WETH_ADDRESS = WMON_CONTRACT;
 
-async function connectToRpc() {
-    for (const url of RPC_URLS) {
-        try {
-            const provider = new ethers.providers.JsonRpcProvider(url);
-            await provider.getNetwork();
-            console.log(`🪫  Starting BeanSwap ⏩⏩⏩⏩`.blue);
-            console.log(` `);
-            return provider;
-        } catch (error) {
-            console.log(`Failed to connect to ${url}, trying another...`);
-        }
-    }
-    throw new Error(`❌ Unable to connect`.red);
+const PRIVATE_KEY = process.env.CURRENT_PK?.trim();
+if (!PRIVATE_KEY) {
+  throw new Error("? No CURRENT_PK found in .env");
 }
 
+const erc20Abi = [
+  {
+    constant: true,
+    inputs: [{ name: "_owner", type: "address" }],
+    name: "balanceOf",
+    outputs: [{ name: "balance", type: "uint256" }],
+    type: "function"
+  },
+  {
+    constant: false,
+    inputs: [
+      { name: "_spender", type: "address" },
+      { name: "_value", type: "uint256" }
+    ],
+    name: "approve",
+    outputs: [{ name: "", type: "bool" }],
+    type: "function"
+  }
+];
 
 function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function getRandomEthAmount() {
-    return ethers.utils.parseEther((Math.random() * (0.01 - 0.0001) + 0.0001).toFixed(6));
+  return ethers.utils.parseEther(
+    (Math.random() * (0.0001 - 0.00001) + 0.00001).toFixed(6)
+  );
 }
 
-async function swapEthForTokens(wallet, tokenAddress, amountInWei, tokenSymbol) {
-    const router = new ethers.Contract(BEAN_SWAP_ROUTER_ADDRESS, ABI, wallet); 
-
+async function connectToRpc() {
+  for (const url of RPC_URLS) {
     try {
-        console.log(`🔄 Swap ${ethers.utils.formatEther(amountInWei)} MON > ${tokenSymbol}`.green);
-
-        const nonce = await wallet.getTransactionCount("pending");
-
-        const tx = await router.swapExactETHForTokens(
-            0, 
-            [WETH_ADDRESS, tokenAddress], 
-            wallet.address,
-            Math.floor(Date.now() / 1000) + 60 * 10, 
-            {
-                value: amountInWei,
-                gasLimit: 210000, 
-                nonce: nonce 
-            }
-        );
-        console.log(`➡️  Hash: ${tx.hash}`.yellow);
-    } catch (error) {
-        console.error(`❌ Failed swap: ${error.message}`.red);
+      const provider = new ethers.providers.JsonRpcProvider(url);
+      const network = await provider.getNetwork();
+      console.log(`? Connected to chain ID: ${network.chainId}`.cyan);
+      return provider;
+    } catch (err) {
+      console.log(`?? Failed to connect to ${url}, trying next...`.red);
     }
-}
-
-async function swapTokensForEth(wallet, tokenAddress, tokenSymbol) {
-    const tokenContract = new ethers.Contract(tokenAddress, erc20Abi, wallet);
-    const balance = await tokenContract.balanceOf(wallet.address);
-
-    if (balance.eq(0)) {
-        console.log(`❌ No balance ${tokenSymbol}, skip`.black);
-        return;
-    }
-
-    const router = new ethers.Contract(BEAN_SWAP_ROUTER_ADDRESS, ABI, wallet);
-
-    try {
-        console.log(`🔄 Swap ${tokenSymbol} > MON`.green);
-
-        await tokenContract.approve(BEAN_SWAP_ROUTER_ADDRESS, balance);
-
-        const nonce = await wallet.getTransactionCount("pending");
-
-        const tx = await router.swapExactTokensForETH(
-            balance, 
-            0, 
-            [tokenAddress, WETH_ADDRESS], 
-            wallet.address, 
-            Math.floor(Date.now() / 1000) + 60 * 10, 
-            {
-                gasLimit: 210000, 
-                nonce: nonce 
-            }
-        );
-        console.log(`➡️  Hash ${tx.hash}`.yellow);
-
-        const delay = Math.floor(Math.random() * (3000 - 1000 + 1)) + 1000;
-        console.log(`⏳ Wait ${delay / 1000} seconds`.grey);
-        console.log(` `);
-
-        await sleep(delay);
-    } catch (error) {
-        console.error(`❌ Failed: ${error.message}`.red);
-    }
+  }
+  throw new Error("? Unable to connect to any RPC endpoint".red);
 }
 
 async function getBalance(wallet) {
-    const provider = wallet.provider;
+  const provider = wallet.provider;
+  const monBalance = await provider.getBalance(wallet.address);
+  console.log(`?? MON Balance : ${ethers.utils.formatEther(monBalance)} MON`.green);
 
-    const monBalance = await provider.getBalance(wallet.address);
-    console.log(`🧧 MON    : ${ethers.utils.formatEther(monBalance)} MON`.green);
+  const wethContract = new ethers.Contract(WETH_ADDRESS, erc20Abi, wallet);
+  const wethBalance = await wethContract.balanceOf(wallet.address);
+  console.log(`?? WETH Balance: ${ethers.utils.formatEther(wethBalance)} WETH`.green);
 
-    const wethContract = new ethers.Contract(WETH_ADDRESS, erc20Abi, wallet);
-    const wethBalance = await wethContract.balanceOf(wallet.address);
-    console.log(`🧧 WETH   : ${ethers.utils.formatEther(wethBalance)} WETH`.green);
-    console.log(" ");
+  return monBalance;
+}
+
+async function swapEthForTokens(wallet, tokenAddress, amountInWei, tokenSymbol) {
+  const router = new ethers.Contract(BEAN_SWAP_ROUTER_ADDRESS, ABI, wallet);
+
+  try {
+    console.log(`?? Swapping ${ethers.utils.formatEther(amountInWei)} MON ? ${tokenSymbol}`.yellow);
+
+    const estimate = await router.estimateGas.swapExactETHForTokens(
+      0,
+      [WETH_ADDRESS, tokenAddress],
+      wallet.address,
+      Math.floor(Date.now() / 1000) + 600,
+      { value: amountInWei }
+    );
+    console.log(`? Estimated gas: ${estimate.toString()}`);
+
+    const tx = await router.swapExactETHForTokens(
+      0,
+      [WETH_ADDRESS, tokenAddress],
+      wallet.address,
+      Math.floor(Date.now() / 1000) + 600,
+      {
+        value: amountInWei,
+        gasLimit: 210000
+      }
+    );
+    console.log(`?? TX Hash: ${tx.hash}`.blue);
+  } catch (err) {
+    console.error("? Swap failed:", err.message.red);
+  }
+}
+
+async function swapTokensForEth(wallet, tokenAddress, tokenSymbol) {
+  const token = new ethers.Contract(tokenAddress, erc20Abi, wallet);
+  const balance = await token.balanceOf(wallet.address);
+
+  if (balance.eq(0)) {
+    console.log(`?? No ${tokenSymbol} balance to swap`.gray);
+    return;
+  }
+
+  try {
+    console.log(`?? Swapping ${tokenSymbol} ? MON`.yellow);
+
+    const approveTx = await token.approve(BEAN_SWAP_ROUTER_ADDRESS, balance);
+    console.log(`? Approve TX: ${approveTx.hash}`);
+
+    const router = new ethers.Contract(BEAN_SWAP_ROUTER_ADDRESS, ABI, wallet);
+
+    const tx = await router.swapExactTokensForETH(
+      balance,
+      0,
+      [tokenAddress, WETH_ADDRESS],
+      wallet.address,
+      Math.floor(Date.now() / 1000) + 600,
+      {
+        gasLimit: 210000
+      }
+    );
+    console.log(`?? Swap TX: ${tx.hash}`.blue);
+  } catch (err) {
+    console.error(`? Swap failed: ${err.message}`.red);
+  }
+}
+
+async function runForWallet(wallet) {
+  console.log(`\n?? Wallet: ${wallet.address}`.bold.green);
+
+  const monBalance = await getBalance(wallet);
+  if (monBalance.lt(ethers.utils.parseEther("0.001"))) {
+    console.log("?? MON balance too low, skipping wallet".red);
+    return;
+  }
+
+  for (const [symbol, address] of Object.entries(TOKEN_ADDRESSES)) {
+    const amount = getRandomEthAmount();
+    await swapEthForTokens(wallet, address, amount, symbol);
+    await sleep(3000);
+  }
+
+  console.log(`\n?? Reversing tokens to MONAD...\n`.white);
+
+  for (const [symbol, address] of Object.entries(TOKEN_ADDRESSES)) {
+    await swapTokensForEth(wallet, address, symbol);
+    await sleep(3000);
+  }
 }
 
 async function main() {
-    const provider = await connectToRpc();
-    const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
-    console.log(`🧧 Account: ${wallet.address}`.green);
+  const provider = await connectToRpc();
+  const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
 
-    await getBalance(wallet);
+  console.log(`\n==============================`);
+  console.log(`?? Running Bean for SINGLE Wallet`);
+  console.log(`==============================`);
 
-    for (const [tokenSymbol, tokenAddress] of Object.entries(TOKEN_ADDRESSES)) {
-        const ethAmount = getRandomEthAmount();
-        await swapEthForTokens(wallet, tokenAddress, ethAmount, tokenSymbol);
-        const delay = Math.floor(Math.random() * (3000 - 1000 + 1)) + 1000;
-        console.log(`⏳ Wait ${delay / 1000} seconds`.grey);
-        console.log(` `);
-        await sleep(delay);
-    }
+  await runForWallet(wallet);
 
-    console.log(" ");
-    console.log(`🧿 All Token Reverse to MONAD`.white);
-    console.log(" ");
-    
-    for (const [tokenSymbol, tokenAddress] of Object.entries(TOKEN_ADDRESSES)) {
-        await swapTokensForEth(wallet, tokenAddress, tokenSymbol);
-    }
+  console.log("\n? Bean process completed for current wallet\n".green);
 }
 
-main().catch(console.error);
+main().catch((err) => console.error("? Fatal Error:", err));

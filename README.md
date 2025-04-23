@@ -19,7 +19,11 @@
    ```
 3. **Set Private Key**
    ```bash
-   echo PRIVATE_KEY=0x2xxxxxxxxxxx > .env
+   nano .env
+   ```
+   **isi dengan
+   ```bash
+   PRIVATE_KEYS=0xwallet1,0xwallet2
    ```
 4. **Create and Use Screen**
    ```bash
@@ -46,15 +50,3 @@ cd Monad-trx && rm package-lock.json && rm package.json && git pull --no-rebase 
 	sudo apt install -y nodejs
 	node -v && npm -v
    ```
-   **Kopi**: https://trakteer.id/Winsnipsupport/tip
-
-### **Join Telegram Winsnip**
-
-Stay updated and connect with the Winsnip community:
-
-Channel: https://t.me/winsnip
-
-Group Chat: https://t.me/winsnip_chat
-
-
-This ensures users can join the Telegram community easily and stay engaged with updates and discussions.

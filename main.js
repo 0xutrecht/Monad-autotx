@@ -1,6 +1,8 @@
-const prompts = require("prompts");
-const displayHeader = require("./src/banner.js");
-const { spawn } = require("child_process");
+const { spawn } = require('child_process');
+const prompts = require('prompts');
+const { ethers } = require('ethers');
+const displayHeader = require('./src/banner.js');
+require('dotenv').config();
 
 async function loadChalk() {
   return (await import("chalk")).default;
@@ -10,50 +12,65 @@ async function loadChalk() {
   const chalk = await loadChalk();
   console.clear();
   displayHeader();
-  console.log(chalk.blueBright.bold("\n🚀 Jalankan Modul Auto\n"));
+  console.log(chalk.blueBright.bold("\n?? Auto TX Monad Testnet - Multi Wallet\n"));
 
   const scripts = [
     { name: "Uniswap", path: "./modul/uniswap.js" },
-    { name: "Deploy Kontrak", path: "./modul/deploy.mjs" },
     { name: "Rubic Swap", path: "./modul/rubic.js" },
-    { name: "Bean Swap", path: "./modul/bean.js" },
     { name: "Magma Staking", path: "./modul/magma.js" },
-    { name: "Izumi Swap", path: "./modul/izumi.js" },
-    { name: "aPriori Staking", path: "./modul/apriori.js" },
-    { name: "Bebob Swap", path: "./modul/bebop.js" },
-    { name: "Monorail", path: "./modul/mono.js" },
     { name: "Kitsu", path: "./modul/kitsu.js" },
-    { name: "AutoSend", path: "./modul/AutoSend.js" },
+    { name: "Izumi", path: "./modul/izumi.js" },
+    { name: "Deploy", path: "./modul/deploy.mjs" },
+    { name: "Bebop", path: "./modul/bebop.js" },
+    { name: "Bean", path: "./modul/bean.js" },
+    { name: "Apriori", path: "./modul/apriori.js" },
   ];
 
-  async function runScript(script) {
-    console.log(chalk.yellow(`\n📜 Menjalankan: ${script.name}...`));
+  // ======== DELAY CONFIG ========
+  const DELAY = {
+    ANTAR_MODUL: 30000,    // 30 detik
+    ANTAR_WALLET: 30000    // 30 detik
+  };
+
+  async function runScript(script, walletIndex, totalWallets) {
+    console.log(chalk.yellow(`\n?? Running ${script.name} [Wallet ${walletIndex + 1}/${totalWallets}]`));
+
     return new Promise((resolve, reject) => {
-      const process = spawn("node", script.path.endsWith(".mjs") ? ["--experimental-modules", script.path] : [script.path]);
+      const process = spawn("node", [script.path], { stdio: 'inherit' });
 
-      process.stdout.on("data", (data) => console.log(chalk.white(data.toString())));
-      process.stderr.on("data", (data) => console.error(chalk.red(`Error: ${data.toString()}`)));
-
-      process.on("close", (code) => {
-        if (code === 0) {
-          console.log(chalk.green(`✅ Berhasil: ${script.name}`));
-          resolve();
-        } else {
-          console.error(chalk.red(`❌ Gagal: ${script.name} (Kode keluar: ${code})`));
-          reject(new Error(`Modul ${script.name} gagal`));
-        }
+      process.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject();
       });
     });
   }
 
-  async function runScriptsSequentially(loopCount, selectedScripts) {
+  async function runAllWallets(loopCount, selectedScripts) {
+    const privateKeys = process.env.PRIVATE_KEYS.split(',')
+      .map(key => key.trim())
+      .filter(key => key);
+
     for (let i = 0; i < loopCount; i++) {
-      console.log(chalk.blueBright(`\n🔄 Loop ${i + 1} dari ${loopCount}...\n`));
-      for (const script of selectedScripts) {
-        try {
-          await runScript(script);
-        } catch (error) {
-          console.error(chalk.red(`⚠️ Melewati ${script.name} karena error`));
+      console.log(chalk.magenta(`\n?? Loop ${i + 1}/${loopCount}`));
+
+      for (let j = 0; j < privateKeys.length; j++) {
+        process.env.CURRENT_PK = privateKeys[j];
+        const address = ethers.utils.computeAddress(privateKeys[j]);
+        console.log(chalk.cyan(`\n?? Wallet ${j + 1}: ${address}`));
+
+        for (const script of selectedScripts) {
+          try {
+            await runScript(script, j, privateKeys.length);
+            console.log(chalk.gray(`? Tunggu ${DELAY.ANTAR_MODUL / 1000} detik sebelum modul berikutnya...`));
+            await new Promise(resolve => setTimeout(resolve, DELAY.ANTAR_MODUL));
+          } catch {
+            console.log(chalk.red("? Modul error, lanjut ke modul berikutnya"));
+          }
+        }
+
+        if (j < privateKeys.length - 1) {
+          console.log(chalk.gray(`? Tunggu ${DELAY.ANTAR_WALLET / 1000} detik sebelum wallet berikutnya...`));
+          await new Promise(resolve => setTimeout(resolve, DELAY.ANTAR_WALLET));
         }
       }
     }
@@ -61,32 +78,24 @@ async function loadChalk() {
 
   async function main() {
     const { selectedModules } = await prompts({
-      type: "autocompleteMultiselect",
-      name: "selectedModules",
-      message: "Pilih modul yang ingin dijalankan:",
-      choices: scripts.map(script => ({
-        title: script.name,
-        value: script,
-        selected: true
-      })),
-      hint: "Gunakan panah atas/bawah untuk navigasi, spasi untuk memilih, dan ketik untuk mencari",
+      type: 'multiselect',
+      name: 'selectedModules',
+      message: 'Pilih modul:',
+      choices: scripts.map(s => ({ title: s.name, value: s })),
       min: 1
     });
 
     const { loopCount } = await prompts({
-      type: "number",
-      name: "loopCount",
-      message: "Berapa kali ingin menjalankan modul?",
-      validate: value => (value > 0 ? true : "Masukkan angka lebih dari 0"),
-      initial: 1
+      type: 'number',
+      name: 'loopCount',
+      message: 'Jumlah loop per wallet?',
+      initial: 1,
+      min: 1
     });
 
-    console.log(chalk.green(`\n🚀 Memulai eksekusi ${selectedModules.length} modul selama ${loopCount} loop\n`));
-
-    await runScriptsSequentially(loopCount, selectedModules);
-
-    console.log(chalk.green.bold("\n✅✅ Semua modul selesai dijalankan! ✅✅\n"));
+    await runAllWallets(loopCount, selectedModules);
+    console.log(chalk.green.bold("\n? Semua transaksi selesai!"));
   }
 
-  main();
+  main().catch(console.error);
 })();
