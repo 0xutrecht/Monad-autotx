@@ -24,6 +24,7 @@ async function loadChalk() {
     { name: "Bebop", path: "./modul/bebop.js" },
     { name: "Bean", path: "./modul/bean.js" },
     { name: "Apriori", path: "./modul/apriori.js" },
+    { name: "Kuru", path: "./modul/kuru.js" },
   ];
 
   // ======== DELAY CONFIG ========
