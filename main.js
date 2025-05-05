@@ -2,7 +2,38 @@ const { spawn } = require('child_process');
 const prompts = require('prompts');
 const { ethers } = require('ethers');
 const displayHeader = require('./src/banner.js');
+const https = require('https');
 require('dotenv').config();
+
+// === TELEGRAM ===
+function sendTelegramMessage(text) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  const message = encodeURIComponent(text);
+  const url = `https://api.telegram.org/bot${token}/sendMessage?chat_id=${chatId}&text=${message}`;
+
+  https.get(url, (res) => {
+    if (res.statusCode !== 200) {
+      console.error(`? Gagal kirim ke Telegram, status code: ${res.statusCode}`);
+    }
+  }).on('error', (e) => {
+    console.error("? Error koneksi Telegram:", e);
+  });
+}
+
+async function getWalletBalances(privateKeys) {
+  const provider = new ethers.providers.JsonRpcProvider(process.env.RPC_URL);
+  const balances = [];
+
+  for (const pk of privateKeys) {
+    const address = ethers.utils.computeAddress(pk);
+    const balance = await provider.getBalance(address);
+    const mnt = parseFloat(ethers.utils.formatEther(balance)).toFixed(4);
+    balances.push({ address, mnt });
+  }
+
+  return balances;
+}
 
 async function loadChalk() {
   return (await import("chalk")).default;
@@ -27,11 +58,12 @@ async function loadChalk() {
     { name: "Kuru", path: "./modul/kuru.js" },
   ];
 
-  // ======== DELAY CONFIG ========
   const DELAY = {
-    ANTAR_MODUL: 30000,    // 30 detik
-    ANTAR_WALLET: 30000    // 30 detik
+    ANTAR_MODUL: 30000,
+    ANTAR_WALLET: 30000
   };
+
+  let totalTx = 0;
 
   async function runScript(script, walletIndex, totalWallets) {
     console.log(chalk.yellow(`\n?? Running ${script.name} [Wallet ${walletIndex + 1}/${totalWallets}]`));
@@ -40,8 +72,14 @@ async function loadChalk() {
       const process = spawn("node", [script.path], { stdio: 'inherit' });
 
       process.on('close', (code) => {
-        if (code === 0) resolve();
-        else reject();
+        if (code === 0) {
+          totalTx++;
+          sendTelegramMessage(`? ${script.name} [Wallet ${walletIndex + 1}] selesai ?`);
+          resolve();
+        } else {
+          sendTelegramMessage(`? ${script.name} [Wallet ${walletIndex + 1}] error ?`);
+          reject();
+        }
       });
     });
   }
@@ -62,7 +100,7 @@ async function loadChalk() {
         for (const script of selectedScripts) {
           try {
             await runScript(script, j, privateKeys.length);
-            console.log(chalk.gray(`? Tunggu ${DELAY.ANTAR_MODUL / 1000} detik sebelum modul berikutnya...`));
+            console.log(chalk.gray(`?? Delay ${DELAY.ANTAR_MODUL / 1000} detik sebelum modul berikutnya...`));
             await new Promise(resolve => setTimeout(resolve, DELAY.ANTAR_MODUL));
           } catch {
             console.log(chalk.red("? Modul error, lanjut ke modul berikutnya"));
@@ -70,33 +108,62 @@ async function loadChalk() {
         }
 
         if (j < privateKeys.length - 1) {
-          console.log(chalk.gray(`? Tunggu ${DELAY.ANTAR_WALLET / 1000} detik sebelum wallet berikutnya...`));
+          console.log(chalk.gray(`?? Delay ${DELAY.ANTAR_WALLET / 1000} detik sebelum wallet berikutnya...`));
           await new Promise(resolve => setTimeout(resolve, DELAY.ANTAR_WALLET));
         }
       }
     }
-  }
 
-  async function main() {
-    const { selectedModules } = await prompts({
-      type: 'multiselect',
-      name: 'selectedModules',
-      message: 'Pilih modul:',
-      choices: scripts.map(s => ({ title: s.name, value: s })),
-      min: 1
-    });
-
-    const { loopCount } = await prompts({
-      type: 'number',
-      name: 'loopCount',
-      message: 'Jumlah loop per wallet?',
-      initial: 1,
-      min: 1
-    });
-
-    await runAllWallets(loopCount, selectedModules);
     console.log(chalk.green.bold("\n? Semua transaksi selesai!"));
+
+    const balances = await getWalletBalances(privateKeys);
+    let message = `? Semua transaksi selesai!\n\n`;
+    message += `?? Total TX: ${totalTx}\n\n`;
+    message += "?? Saldo Wallet:\n";
+
+    balances.forEach((b, i) => {
+      message += `?? Wallet ${i + 1}: ${b.address.slice(0, 6)}...${b.address.slice(-4)}\n  ?? ${b.mnt} MNT\n`;
+    });
+
+    sendTelegramMessage(message);
   }
 
-  main().catch(console.error);
+  function getRandomDelayUntilNextRun() {
+    const now = new Date();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(now.getDate() + 1);
+    tomorrow.setHours(0, 0, 0, 0);
+
+    const millisUntilMidnight = tomorrow.getTime() - now.getTime();
+    const randomDelay = Math.floor(Math.random() * millisUntilMidnight);
+    return randomDelay;
+  }
+
+  async function scheduleDailyRun() {
+    try {
+      totalTx = 0;
+      await runAllWallets(1, scripts);
+    } catch (err) {
+      console.error(chalk.red("? Error saat eksekusi awal:"), err);
+      sendTelegramMessage("? Error saat eksekusi awal:\n" + err.message);
+    }
+
+    while (true) {
+      const delay = getRandomDelayUntilNextRun();
+      const nextRun = new Date(Date.now() + delay);
+      console.log(chalk.blue(`\n?? Menunggu hingga eksekusi berikutnya: ${nextRun.toLocaleString()}`));
+
+      await new Promise(resolve => setTimeout(resolve, delay));
+
+      try {
+        totalTx = 0;
+        await runAllWallets(1, scripts);
+      } catch (err) {
+        console.error(chalk.red("? Error saat eksekusi harian:"), err);
+        sendTelegramMessage("? Error saat eksekusi harian:\n" + err.message);
+      }
+    }
+  }
+
+  scheduleDailyRun();
 })();
