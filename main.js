@@ -3,7 +3,22 @@ const prompts = require('prompts');
 const { ethers } = require('ethers');
 const displayHeader = require('./src/banner.js');
 const https = require('https');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
+
+// === LOCK FILE ===
+const LOCK_FILE = path.join(__dirname, 'main.lock');
+if (fs.existsSync(LOCK_FILE)) {
+  console.log("? Bot sudah berjalan di screen lain. Keluar...");
+  process.exit(1);
+}
+fs.writeFileSync(LOCK_FILE, 'running');
+process.on('exit', () => {
+  if (fs.existsSync(LOCK_FILE)) fs.unlinkSync(LOCK_FILE);
+});
+process.on('SIGINT', () => process.exit());
+process.on('SIGTERM', () => process.exit());
 
 // === TELEGRAM ===
 function sendTelegramMessage(text) {
@@ -21,13 +36,30 @@ function sendTelegramMessage(text) {
   });
 }
 
+// === CEK SALDO ===
 async function getWalletBalances(privateKeys) {
   const provider = new ethers.providers.JsonRpcProvider(process.env.RPC_URL);
   const balances = [];
 
   for (const pk of privateKeys) {
     const address = ethers.utils.computeAddress(pk);
-    const balance = await provider.getBalance(address);
+    let balance;
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        balance = await provider.getBalance(address);
+        break;
+      } catch (err) {
+        console.warn(`?? Gagal ambil saldo untuk ${address} (percobaan ${attempt})`);
+        if (attempt === 3) {
+          sendTelegramMessage(`? Gagal ambil saldo untuk ${address} setelah 3x percobaan.`);
+          balance = ethers.BigNumber.from("0");
+        } else {
+          await new Promise(res => setTimeout(res, 3000));
+        }
+      }
+    }
+
     const mnt = parseFloat(ethers.utils.formatEther(balance)).toFixed(4);
     balances.push({ address, mnt });
   }
@@ -35,6 +67,7 @@ async function getWalletBalances(privateKeys) {
   return balances;
 }
 
+// === UTILITY ===
 async function loadChalk() {
   return (await import("chalk")).default;
 }
@@ -67,10 +100,8 @@ async function loadChalk() {
 
   async function runScript(script, walletIndex, totalWallets) {
     console.log(chalk.yellow(`\n?? Running ${script.name} [Wallet ${walletIndex + 1}/${totalWallets}]`));
-
     return new Promise((resolve, reject) => {
       const process = spawn("node", [script.path], { stdio: 'inherit' });
-
       process.on('close', (code) => {
         if (code === 0) {
           totalTx++;
@@ -91,16 +122,16 @@ async function loadChalk() {
 
     for (let i = 0; i < loopCount; i++) {
       console.log(chalk.magenta(`\n?? Loop ${i + 1}/${loopCount}`));
-
       for (let j = 0; j < privateKeys.length; j++) {
         process.env.CURRENT_PK = privateKeys[j];
         const address = ethers.utils.computeAddress(privateKeys[j]);
-        console.log(chalk.cyan(`\n?? Wallet ${j + 1}: ${address}`));
+        console.log(chalk.cyan(`\n?? Mulai wallet ${j + 1}: ${address}`));
+        sendTelegramMessage(`?? Mulai swap wallet\n${address}`);
 
         for (const script of selectedScripts) {
           try {
             await runScript(script, j, privateKeys.length);
-            console.log(chalk.gray(`?? Delay ${DELAY.ANTAR_MODUL / 1000} detik sebelum modul berikutnya...`));
+            console.log(chalk.gray(`? Delay ${DELAY.ANTAR_MODUL / 1000} detik sebelum modul berikutnya...`));
             await new Promise(resolve => setTimeout(resolve, DELAY.ANTAR_MODUL));
           } catch {
             console.log(chalk.red("? Modul error, lanjut ke modul berikutnya"));
@@ -108,21 +139,20 @@ async function loadChalk() {
         }
 
         if (j < privateKeys.length - 1) {
-          console.log(chalk.gray(`?? Delay ${DELAY.ANTAR_WALLET / 1000} detik sebelum wallet berikutnya...`));
+          console.log(chalk.gray(`? Delay ${DELAY.ANTAR_WALLET / 1000} detik sebelum wallet berikutnya...`));
           await new Promise(resolve => setTimeout(resolve, DELAY.ANTAR_WALLET));
         }
+
+        sendTelegramMessage(`? Wallet ${address} selesai.\n?? TX: ${totalTx} total\n?? Hari aktif: 11`);
       }
     }
 
-    console.log(chalk.green.bold("\n? Semua transaksi selesai!"));
+    console.log(chalk.green.bold("\n?? Semua transaksi selesai!"));
 
     const balances = await getWalletBalances(privateKeys);
-    let message = `? Semua transaksi selesai!\n\n`;
-    message += `?? Total TX: ${totalTx}\n\n`;
-    message += "?? Saldo Wallet:\n";
-
+    let message = `? Semua transaksi selesai!\n\n?? Total TX: ${totalTx}\n\n?? Saldo Wallet:\n`;
     balances.forEach((b, i) => {
-      message += `?? Wallet ${i + 1}: ${b.address.slice(0, 6)}...${b.address.slice(-4)}\n  ?? ${b.mnt} MNT\n`;
+      message += `?? Wallet ${i + 1}: ${b.address}\n   ?? ${b.mnt} MNT\n`;
     });
 
     sendTelegramMessage(message);
@@ -133,7 +163,6 @@ async function loadChalk() {
     const tomorrow = new Date(now);
     tomorrow.setDate(now.getDate() + 1);
     tomorrow.setHours(0, 0, 0, 0);
-
     const millisUntilMidnight = tomorrow.getTime() - now.getTime();
     const randomDelay = Math.floor(Math.random() * millisUntilMidnight);
     return randomDelay;
@@ -152,7 +181,6 @@ async function loadChalk() {
       const delay = getRandomDelayUntilNextRun();
       const nextRun = new Date(Date.now() + delay);
       console.log(chalk.blue(`\n?? Menunggu hingga eksekusi berikutnya: ${nextRun.toLocaleString()}`));
-
       await new Promise(resolve => setTimeout(resolve, delay));
 
       try {
